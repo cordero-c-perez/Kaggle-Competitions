@@ -239,7 +239,7 @@ CrossTable(test_data$Survived, rf_predictions, prop.r = F, prop.c = F, prop.chis
 
 
 # FINAL STEP: RUN TEST DATA THROUGH FUNCTION AND MODEL
-# Kaggle Submission
+# Kaggle Submission 1 - Random Forest Model
 
 # load data     
 kc_test_data <- read_csv("test.csv", col_names = TRUE)
@@ -284,8 +284,24 @@ write_csv(kc_submission, "kc_submission_perez.csv")
 
 
 
+# FINAL STEP: RUN TEST DATA THROUGH FUNCTION AND MODEL
+# Kaggle Submission 2 - Logistic Regression Model
 
+# create the log model
+lr_model <- glm(Survived~., data = tdata, family = "binomial")
+summary(lr_model)
 
+# get predictions
+kc_predictions_lr <- predict(model, newdata = kc_test_data, type = "class")
+
+# create survival vector
+survival_vector <- ifelse(kc_predictions_lr == "Yes", "1", "0")
+
+# combine to passengerIDs
+kc_submission$Survived <- survival_vector
+
+# export to csv for submission
+write_csv(kc_submission, "kc_submission_2_perez.csv")
 
 
 
