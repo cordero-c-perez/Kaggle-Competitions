@@ -14,11 +14,9 @@ library(randomForest)
 # ATTEMPT 1: DECISION TREE METHOD
 
 
-# Which features seem to be good predictors of passenger survival?
-# sex, 
-
-# Can any features be created?
-# Using the 
+# QUESTIONS TO MAKE A GOOD MODEL
+# 1. Which features seem to be good predictors of passenger survival?
+# 2. Can any features be created?
 
 
 
@@ -27,16 +25,16 @@ library(randomForest)
 tdata <- read_csv("train.csv", col_names = TRUE)
 
 
-
-# STEP 2:
-# REMOVE INSIGNIFICANT FEATURES
-tdata$Cabin <- NULL
-
-
 # PUT CLEANING AND CONVERTING STEPS INTO A FUNCTION AND CALL FUNCTION
 
 clean_titanic_data <- function(tdata){
      
+     # STEP 2:
+     # REMOVE INSIGNIFICANT FEATURES
+     tdata$Cabin <- NULL
+       
+        
+         
      # STEP 3:
      # CLEAN AND CONVERT TICKET COLUMN TO TWO VECTORS THAT MIGHT HAVE CORRELATION
      # strip letters and punctuation from ticket column and convert to numeric
@@ -51,10 +49,10 @@ clean_titanic_data <- function(tdata){
      
      
      tdata$TicketLength <- as.factor(nchar(tdata$Ticket)) # new feature
-     tdata$TicketLeft <- as.factor(str_sub(tdata$Ticket, start = 1, end = 1)) # new feature
+     tdata$TicketLeft <- factor(str_sub(tdata$Ticket, start = 1, end = 1), levels = c(0:9)) # new feature
      
-     table(factor(tdata$Survived), factor(tdata$TicketLength))
-     table(factor(tdata$Pclass), factor(tdata$TicketLength))
+     #table(factor(tdata$Survived), factor(tdata$TicketLength))
+     #table(factor(tdata$Pclass), factor(tdata$TicketLength))
      
      
      
@@ -66,7 +64,7 @@ clean_titanic_data <- function(tdata){
      
      
      # STEP 5:
-     #CORRECT NA VALUES IN AGE VECTOR
+     # CORRECT NA VALUES IN AGE VECTOR
      # impute missing age values with the median age by Pclass group
      # this makes sense because different class tickets have different ages generally, the more successful the higher the age, typically
      tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "1") & (tdata$Sex == "female"), 
@@ -81,6 +79,14 @@ clean_titanic_data <- function(tdata){
                          21.5, tdata$Age)
      tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "3") & (tdata$Sex == "male"), 
                          25, tdata$Age)
+     
+     
+     # STEP 5.5: NOT APPLICABLE UNTIL REACHING TEST SET
+     # CORRECT NA VALUES IN FARE VECTOR
+     # impute fare values with the average of similar group: ~ $7
+     if( sum(is.na(tdata$Fare)) > 0){
+             tdata$Fare <- ifelse((is.na(tdata$Fare)), 7, tdata$Fare)  
+     }
      
      
      
@@ -112,13 +118,21 @@ clean_titanic_data <- function(tdata){
      # STEP 7:
      # CONVERT REMAINING FEATURES TO FACTORS                
      tdata$Pclass <-  as.factor(tdata$Pclass)
-     tdata$Survived <- as.factor(recode(tdata$Survived, "1" = "Yes", "0" = "No"))
+     if ("Survived" %in% colnames(tdata)){
+             tdata$Survived <- as.factor(recode(tdata$Survived, "1" = "Yes", "0" = "No"))   
+     }
      tdata$Sex <- as.factor(tdata$Sex)
      tdata$SibSp <- as.factor(tdata$SibSp)
+     tdata$Parch <- ifelse(!(tdata$Parch %in% c(0:6)), 6, tdata$Parch) 
      tdata$Parch <- as.factor(tdata$Parch)
      
      # features to keep
-     kept_features <- c("Survived", "Pclass", "Sex", "SibSp", "Parch", "Fare", "Embarked", "TicketLeft", "AgeBin")
+     if ("Survived" %in% colnames(tdata)){
+             kept_features <- c("Survived", "Pclass", "Sex", "SibSp", "Parch", "Fare", "Embarked", "TicketLeft", "AgeBin")
+     }
+     else {
+             kept_features <- c("Pclass", "Sex", "SibSp", "Parch", "Fare", "Embarked", "TicketLeft", "AgeBin")
+     }
      
      return(select(tdata,kept_features))
      
@@ -164,17 +178,13 @@ CrossTable(tdata$TicketLeft, tdata$Pclass, prop.r = T, prop.c = F, prop.t = F, p
 # may be good to get rid of cleaned ticket feature
 CrossTable(tdata$AgeBin, tdata$Survived, prop.r = T, prop.c = F, prop.t = F, prop.chisq = F)
 
-ggplot(data = tdata, mapping = aes(x = Age))+
-     geom_histogram()+
-     facet_wrap(~ Survived)
-
 # shows Fare at the extreme end helps to show survival
 ggplot(data = tdata, mapping = aes(x = Fare))+
      geom_histogram()+
      facet_wrap(~ Survived)
 
 # vector of kept features to put in function
-kept_features <- c("Survived", "Pclass", "Sex", "SibSp", "Parch", "Fare", "Embarked", "TicketLeft", "AgeBin")
+# moved into the function
 
 
 
@@ -234,10 +244,53 @@ CrossTable(test_data$Survived, rf_predictions, prop.r = F, prop.c = F, prop.chis
 # load data     
 kc_test_data <- read_csv("test.csv", col_names = TRUE)
 
-# clean data
-kc_test_data <- clean_titanic_data(kc_test_data)
-     
+# copy passenger IDs prior to functions
+kc_submission <- kc_test_data[,1]
 
+# clean data
+kc_test_data <- clean_titanic_data(kc_test_data) 
+
+
+# create model using full training data to get the highest utility------------------------------
+# STEP 12: CREATE RANDOM FOREST MODEL AND GET ACCURACY AND PREDICTIONS
+# create the random forest model
+rf_model_kc <- randomForest(tdata[,-1], tdata$Survived)
+
+summary(rf_model_kc)
+
+# get predictions
+rf_predictions_kc_test <- predict(rf_model_kc, tdata[,-1])
+
+# score: 90% - to be expected when using data that trained the model for a test, this is just to get info
+mean(rf_predictions_kc_test == tdata$Survived)
+
+# 21 false positives, 66 false negatives - against itself
+CrossTable(tdata$Survived, rf_predictions_kc_test, prop.r = F, prop.c = F, prop.chisq = F)
+#------------------------------------------------------------------------------------------------
+
+
+# get predictions from random forest model on actual test data
+kc_predictions <- predict(rf_model_kc, newdata = kc_test_data)
+     
+# join predictions back to the original passenger IDs and conver to 0 1
+kc_submission$Survived <- kc_predictions
+kc_submission$Survived <- as.factor(recode(kc_submission$Survived, "Yes" = "1", "No" = "0"))
+
+# view submission data
+view(kc_submission)
+
+# export to csv for submission
+write_csv(kc_submission, "kc_submission_perez.csv")
+
+
+
+
+
+
+
+
+
+# METHODS TO TRY LATER IN ORDER TO IMPROVE MODEL
 # # regression methods
 # reg_data <- read_csv("train.csv", col_names = TRUE)
 # 
