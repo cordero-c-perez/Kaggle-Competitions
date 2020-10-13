@@ -8,7 +8,8 @@ library(C50)
 library(gmodels)
 library(htmlwidgets)
 library(randomForest)
-
+library(rpart)
+library(rpart.plot)
 
 
 # ATTEMPT 1: DECISION TREE METHOD
@@ -23,6 +24,7 @@ library(randomForest)
 # STEP 1:
 # load data
 tdata <- read_csv("train.csv", col_names = TRUE)
+
 
 
 # PUT CLEANING AND CONVERTING STEPS INTO A FUNCTION AND CALL FUNCTION
@@ -67,25 +69,29 @@ clean_titanic_data <- function(tdata){
      # CORRECT NA VALUES IN AGE VECTOR
      # impute missing age values with the median age by Pclass group
      # this makes sense because different class tickets have different ages generally, the more successful the higher the age, typically
-     tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "1") & (tdata$Sex == "female"), 
-                         35, tdata$Age)
-     tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "1") & (tdata$Sex == "male"), 
-                         40, tdata$Age)
-     tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "2") & (tdata$Sex == "female"), 
-                         28, tdata$Age)
-     tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "2") & (tdata$Sex == "male"), 
-                         30, tdata$Age)
-     tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "3") & (tdata$Sex == "female"), 
-                         21.5, tdata$Age)
-     tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "3") & (tdata$Sex == "male"), 
-                         25, tdata$Age)
+     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "1") & (tdata$Sex == "female"),
+     #                     35, tdata$Age)
+     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "1") & (tdata$Sex == "male"),
+     #                     40, tdata$Age)
+     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "2") & (tdata$Sex == "female"),
+     #                     28, tdata$Age)
+     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "2") & (tdata$Sex == "male"),
+     #                     30, tdata$Age)
+     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "3") & (tdata$Sex == "female"),
+     #                     21.5, tdata$Age)
+     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "3") & (tdata$Sex == "male"),
+     #                     25, tdata$Age)
+     tdata$Age <- ifelse(is.na(tdata$Age), mean(tdata$Age, na.rm = T), tdata$Age)
+     
      
      
      # STEP 5.5: NOT APPLICABLE UNTIL REACHING TEST SET
      # CORRECT NA VALUES IN FARE VECTOR
      # impute fare values with the average of similar group: ~ $7
-     if( sum(is.na(tdata$Fare)) > 0){
-             tdata$Fare <- ifelse((is.na(tdata$Fare)), 7, tdata$Fare)  
+     if ("Fare" %in% colnames(tdata)){
+             if (sum(is.na(tdata$Fare)) > 0){
+                tdata$Fare <- ifelse((is.na(tdata$Fare)), 7, tdata$Fare)  
+             }
      }
      
      
@@ -111,7 +117,7 @@ clean_titanic_data <- function(tdata){
      
      
      
-     # STEP 6.5: MAYBE ADD A FEATURE VECTOR THAT SHOWS WHICH AGES HAVE BEEN IMPUTED.
+     # STEP 6.5: MAYBE ADD A FEATURE VECTOR THAT SHOWS WHICH AGES HAVE BEEN IMPUTED
      
      
      
@@ -125,6 +131,7 @@ clean_titanic_data <- function(tdata){
      tdata$SibSp <- as.factor(tdata$SibSp)
      tdata$Parch <- ifelse(!(tdata$Parch %in% c(0:6)), 6, tdata$Parch) 
      tdata$Parch <- as.factor(tdata$Parch)
+     
      
      # features to keep
      if ("Survived" %in% colnames(tdata)){
@@ -147,6 +154,13 @@ tdata <- clean_titanic_data(tdata = tdata)
 # VIEW THE STRUCTURE AND CHECK FOR MISSING VALUES AND OUTLIERS
 str(tdata)
 summary(tdata)
+
+
+# STEP 8.5:
+# VIEW POSSIBLE COMBINAITONS MANUALLY IN A DATAFRAME
+# tdata_comos <- tdata %>% 
+#         group_by(Survived, Pclass, Sex, SibSp, Parch, Fare, Embarked, TicketLeft, AgeBin) %>% 
+#         summarize(count = n())
 
 
 
@@ -217,14 +231,14 @@ predictions <- predict(model, test_data)
 # score: 80%
 mean(predictions == test_data$Survived)
 
-# 15 false positives, 29 fale negatives
+# 15 false positives, 29 false negatives
 CrossTable(test_data$Survived, predictions, prop.r = F, prop.c = F, prop.chisq = F)
 
 
 
 # STEP 12: CREATE RANDOM FOREST MODEL AND GET ACCURACY AND PREDICTIONS
 # create the random forest model
-rf_model <- randomForest(train_data[-1], train_data$Survived)
+rf_model <- randomForest(train_data[-1], train_data$Survived, costs = error_cost)
 
 summary(rf_model)
 
@@ -236,6 +250,34 @@ mean(rf_predictions == test_data$Survived)
 
 # 11 false positives, 25 false negatives
 CrossTable(test_data$Survived, rf_predictions, prop.r = F, prop.c = F, prop.chisq = F)
+
+
+
+# STEP 13: CREATE LOGISTIC REGRESSION MODEL AND GET ACCURACY AND PREDICTIONS
+# create the log model
+lr_model <- glm(Survived~., data = train_data, family = "binomial")
+summary(lr_model)
+
+# get predictions
+predictions_lr <- predict(lr_model, newdata = test_data, type = "response")
+predictions_lr <- ifelse(predictions_lr > .60, "Yes", "No")
+
+# get accuracy
+mean(predictions_lr == test_data$Survived)
+
+
+
+# STEP 14: CREATE RPART MODEL AND GT ACCURACY AND PREDICTIONS
+# create the rpart model
+rpart_model <- rpart(formula = Survived ~., data = train_data, method = "class")
+summary(rpart_model)
+rpart.plot(rpart_model)
+
+# get predictions
+predictions_rpart <- predict(rpart_model, newdata = test_data, type = "class")
+
+# get accuracy
+mean(predictions_rpart == test_data$Survived)
 
 
 # FINAL STEP: RUN TEST DATA THROUGH FUNCTION AND MODEL
@@ -252,25 +294,10 @@ kc_test_data <- clean_titanic_data(kc_test_data)
 
 
 # create model using full training data to get the highest utility------------------------------
-# STEP 12: CREATE RANDOM FOREST MODEL AND GET ACCURACY AND PREDICTIONS
-# create the random forest model
-rf_model_kc <- randomForest(tdata[,-1], tdata$Survived)
-
-summary(rf_model_kc)
-
-# get predictions
-rf_predictions_kc_test <- predict(rf_model_kc, tdata[,-1])
-
-# score: 90% - to be expected when using data that trained the model for a test, this is just to get info
-mean(rf_predictions_kc_test == tdata$Survived)
-
-# 21 false positives, 66 false negatives - against itself
-CrossTable(tdata$Survived, rf_predictions_kc_test, prop.r = F, prop.c = F, prop.chisq = F)
-#------------------------------------------------------------------------------------------------
-
+# rf_model_kc <- randomForest(tdata[,-1], tdata$Survived, costs = error_cost)
 
 # get predictions from random forest model on actual test data
-kc_predictions <- predict(rf_model_kc, newdata = kc_test_data)
+kc_predictions <- predict(rf_model, newdata = kc_test_data)
      
 # join predictions back to the original passenger IDs and conver to 0 1
 kc_submission$Survived <- kc_predictions
@@ -280,28 +307,50 @@ kc_submission$Survived <- as.factor(recode(kc_submission$Survived, "Yes" = "1", 
 view(kc_submission)
 
 # export to csv for submission
-write_csv(kc_submission, "kc_submission_perez.csv")
+#write_csv(kc_submission, "kc_submission_perez.csv")
+#write_csv(kc_submission, "kc_submission_4_perez.csv")
 
 
 
 # FINAL STEP: RUN TEST DATA THROUGH FUNCTION AND MODEL
 # Kaggle Submission 2 - Logistic Regression Model
 
-# create the log model
-lr_model <- glm(Survived~., data = tdata, family = "binomial")
-summary(lr_model)
-
 # get predictions
-kc_predictions_lr <- predict(model, newdata = kc_test_data, type = "class")
-
-# create survival vector
-survival_vector <- ifelse(kc_predictions_lr == "Yes", "1", "0")
+kc_predictions_lr <- predict(lr_model, newdata = kc_test_data, type = "response")
+kc_predictions_lr <- ifelse(kc_predictions_lr > .60, 1, 0)
 
 # combine to passengerIDs
-kc_submission$Survived <- survival_vector
+kc_submission$Survived <- kc_predictions_lr
+
+# view kc submission
+view(kc_submission)
 
 # export to csv for submission
-write_csv(kc_submission, "kc_submission_2_perez.csv")
+#write_csv(kc_submission, "kc_submission_2_perez.csv")
+#write_csv(kc_submission, "kc_submission_5_perez.csv")
+
+
+
+# Kaggle Submission 6 - RPart Model
+
+# get predictions
+kc_predictions_rp <- predict(rpart_model, newdata = kc_test_data, type = "class")
+kc_predictions_rp <- ifelse(kc_predictions_rp == "Yes", 1, 0)
+
+# combine to passengerIDs
+kc_submission$Survived <- kc_predictions_rp
+
+# view kc submission
+view(kc_submission)
+
+# export to csv for submission
+write_csv(kc_submission, "kc_submission_6_perez.csv")
+#write_csv(kc_submission, "kc_submission_5_perez.csv")
+
+
+
+
+
 
 
 
