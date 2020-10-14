@@ -3,13 +3,14 @@ rm(list = ls(all.names = T))
 
 
 library(tidyverse)
-library(PerformanceAnalytics)
-library(C50)
 library(gmodels)
 library(htmlwidgets)
 library(randomForest)
-library(rpart)
-library(rpart.plot)
+library(fastDummies)
+library(caret)
+library(irr)
+library(C50)
+
 
 
 # ATTEMPT 1: DECISION TREE METHOD
@@ -32,29 +33,36 @@ tdata <- read_csv("train.csv", col_names = TRUE)
 clean_titanic_data <- function(tdata){
      
      # STEP 2:
-     # REMOVE INSIGNIFICANT FEATURES
-     tdata$Cabin <- NULL
-       
+     # CREATE TITLE FEATURE
+     tdata$Title <- str_extract(tdata$Name,",.+\\.") %>% str_replace(", ","") %>% str_replace("Mrs.+", "Mrs.")
+     
+     
+     
+     # FIX CABIN FEATURE BY EXTRACTING FIRST CHARACTER
+     tdata$Cabin <- ifelse(is.na(tdata$Cabin), "U", str_sub(tdata$Cabin, start = 1, end = 1))
+     
         
          
      # STEP 3:
      # CLEAN AND CONVERT TICKET COLUMN TO TWO VECTORS THAT MIGHT HAVE CORRELATION
      # strip letters and punctuation from ticket column and convert to numeric
-     while (sum(str_detect(tdata$Ticket,"[[:punct:]]")) > 0){
-          
-          tdata$Ticket <- str_replace(tdata$Ticket,"[[:punct:]]","")
-          
-     }
-     tdata$Ticket <- str_trim(str_replace(tdata$Ticket,"[ABCDEFGHIJKLMNOPQRTSTUVWXYZ].+\\s", ""))
-     tdata$Ticket <- str_trim(str_replace(tdata$Ticket,"[ABCDEFGHIJKLMNOPQRTSTUVWXYZ]\\s", ""))
-     tdata$Ticket <- str_trim(str_replace(tdata$Ticket,"[ABCDEFGHIJKLMNOPQRTSTUVWXYZ].+$", "0"))
-     
-     
-     tdata$TicketLength <- as.factor(nchar(tdata$Ticket)) # new feature
-     tdata$TicketLeft <- factor(str_sub(tdata$Ticket, start = 1, end = 1), levels = c(0:9)) # new feature
-     
-     #table(factor(tdata$Survived), factor(tdata$TicketLength))
-     #table(factor(tdata$Pclass), factor(tdata$TicketLength))
+     # while (sum(str_detect(tdata$Ticket,"[[:punct:]]")) > 0){
+     #      
+     #      tdata$Ticket <- str_replace(tdata$Ticket,"[[:punct:]]","")
+     #      
+     # }
+     # tdata$Ticket <- str_trim(str_replace(tdata$Ticket,"[ABCDEFGHIJKLMNOPQRTSTUVWXYZ].+\\s", ""))
+     # tdata$Ticket <- str_trim(str_replace(tdata$Ticket,"[ABCDEFGHIJKLMNOPQRTSTUVWXYZ]\\s", ""))
+     # tdata$Ticket <- str_trim(str_replace(tdata$Ticket,"[ABCDEFGHIJKLMNOPQRTSTUVWXYZ].+$", "0"))
+     # 
+     # 
+     # tdata$TicketLength <- as.factor(nchar(tdata$Ticket)) # new feature
+     # tdata$TicketLeft <- factor(str_sub(tdata$Ticket, start = 1, end = 1), levels = c(0:9)) # new feature
+     # 
+     # ggplot(data = tdata, mapping = aes(x = Pclass))+
+     #         stat_count()+
+     #         facet_wrap(~ Survived)
+     tdata$Ticket <- NULL
      
      
      
@@ -64,24 +72,30 @@ clean_titanic_data <- function(tdata){
      tdata$Embarked <- as.factor(ifelse(is.na(tdata$Embarked), "S", tdata$Embarked))
      
      
+     # Create Age Summary Table
+     tdata_age_values <- tdata %>%
+             group_by(Pclass,Sex,Title) %>% 
+             summarize(median_age = median(Age, na.rm = T))
+     
+     
      
      # STEP 5:
      # CORRECT NA VALUES IN AGE VECTOR
-     # impute missing age values with the median age by Pclass group
-     # this makes sense because different class tickets have different ages generally, the more successful the higher the age, typically
-     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "1") & (tdata$Sex == "female"),
-     #                     35, tdata$Age)
-     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "1") & (tdata$Sex == "male"),
-     #                     40, tdata$Age)
-     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "2") & (tdata$Sex == "female"),
-     #                     28, tdata$Age)
-     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "2") & (tdata$Sex == "male"),
-     #                     30, tdata$Age)
-     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "3") & (tdata$Sex == "female"),
-     #                     21.5, tdata$Age)
-     # tdata$Age <- ifelse((is.na(tdata$Age)) & (tdata$Pclass == "3") & (tdata$Sex == "male"),
-     #                     25, tdata$Age)
-     tdata$Age <- ifelse(is.na(tdata$Age), mean(tdata$Age, na.rm = T), tdata$Age)
+     # impute missing age values with the median age by Pclass, Sex, and Title
+     
+     tdata$Age <- ifelse(is.na(tdata$Age), median(tdata$Age, na.rm = T), tdata$Age)
+     # for (i in 1:length(tdata$PassengerId)){
+     #         
+     #         if (is.na(tdata$Age[i])){
+     #                 
+     #                 temp <- tdata_age_values %>%
+     #                         filter (Pclass == tdata$Pclass[i]) %>% 
+     #                         filter (Sex == tdata$Sex[i]) %>% 
+     #                         filter (Title == tdata$Title[i]) 
+     #                 
+     #                 tdata$Age[i] <- temp$median_age
+     #         }
+     # }
      
      
      
@@ -99,21 +113,21 @@ clean_titanic_data <- function(tdata){
      # STEP 6: 
      # CREATE BINNED AGE VECTOR 
      # set up cut-off values 
-     age_breaks <- c(0,18,28,40,60,80)
-     #age_breaks <- c(0,10,20,30,40,50,60,70,80)
-     
-     # specify interval/bin labels
-     age_tags <- c("[0-18)","[18-28)", "[28-40)", "[40-60)", "[60-80)")
-     #age_tags <- c("[0-10)","[10-20)", "[20-30)", "[30-40)", "[40-50)", "[50-60)", "[60-70)", "[70,80)")
-     
-     # bucketing values into bins
-     age_vector<- cut(tdata$Age, 
-                      breaks = age_breaks, 
-                      include.lowest = TRUE, 
-                      right = FALSE, 
-                      labels = age_tags)
-     
-     tdata$AgeBin <- as.factor(age_vector)
+     # age_breaks <- c(0,18,28,40,60,80)
+     # #age_breaks <- c(0,10,20,30,40,50,60,70,80)
+     # 
+     # # specify interval/bin labels
+     # age_tags <- c("[0-18)","[18-28)", "[28-40)", "[40-60)", "[60-80)")
+     # #age_tags <- c("[0-10)","[10-20)", "[20-30)", "[30-40)", "[40-50)", "[50-60)", "[60-70)", "[70,80)")
+     # 
+     # # bucketing values into bins
+     # age_vector<- cut(tdata$Age, 
+     #                  breaks = age_breaks, 
+     #                  include.lowest = TRUE, 
+     #                  right = FALSE, 
+     #                  labels = age_tags)
+     # 
+     # tdata$AgeBin <- as.factor(age_vector)
      
      
      
@@ -125,23 +139,22 @@ clean_titanic_data <- function(tdata){
      # CONVERT REMAINING FEATURES TO FACTORS                
      tdata$Pclass <-  as.factor(tdata$Pclass)
      if ("Survived" %in% colnames(tdata)){
-             tdata$Survived <- as.factor(recode(tdata$Survived, "1" = "Yes", "0" = "No"))   
+             tdata$Survived <- as.factor(tdata$Survived)  
      }
      tdata$Sex <- as.factor(tdata$Sex)
      tdata$SibSp <- as.factor(tdata$SibSp)
      tdata$Parch <- ifelse(!(tdata$Parch %in% c(0:6)), 6, tdata$Parch) 
      tdata$Parch <- as.factor(tdata$Parch)
+     tdata$Fare <- scale(tdata$Fare)
      
      
-     # features to keep
-     if ("Survived" %in% colnames(tdata)){
-             kept_features <- c("Survived", "Pclass", "Sex", "SibSp", "Parch", "Fare", "Embarked", "TicketLeft", "AgeBin")
-     }
-     else {
-             kept_features <- c("Pclass", "Sex", "SibSp", "Parch", "Fare", "Embarked", "TicketLeft", "AgeBin")
-     }
      
-     return(select(tdata,kept_features))
+     # CREATE DUMMY VARIABLES AND DROP UNIMPORTANT FEATURES
+     tdata <- select(tdata, -c("PassengerId", "Name", "Parch", "Cabin", "Embarked", "SibSp")) %>% 
+             dummy_cols(select_columns = c("Pclass", "Sex", "Title"), remove_selected_columns = T)
+     
+     
+     return(tdata)
      
 }
 
@@ -202,82 +215,51 @@ ggplot(data = tdata, mapping = aes(x = Fare))+
 
 
 
-# STEP 10: CREATE TRAIN AND TEST SETS FOR MODEL
-# check original proportions
-prop.table(table(tdata$Survived))
+# STEP 10: CREATE TRAIN AND TEST SETS FOR MODEL - CROSS VALIDATION
 
-# create training set
+# create folds for 10 fold cross validation
 set.seed(123)
-train_i <- sample(nrow(tdata), .75*nrow(tdata))
+folds <- createFolds(y = tdata$Survived, k = 10)
 
-train_data <- tdata[train_i,]
-test_data <- tdata[-train_i,]
+# define function that runs the model over each fold and retains accuracy and kappa score
+cv_rf_function <- function(fold){
+        train <- tdata[-fold,]
+        test <- tdata[fold,]
+        rf_model <- randomForest(train[-1], train$Survived)
+        rf_predictions <- predict(rf_model, test[-1])
+        rf_actual <- test$Survived
+        mean_score <- mean(rf_predictions == rf_actual)
+        kappa <- kappa2(data.frame(rf_actual, rf_predictions))$value
+        return(mean_score)
+}
 
-# test training set proportion
-prop.table(table(train_data$Survived)) # good seed value
-
-
-
-# STEP 11: CREATE C50 MODEL AND GET PREDICTIONS AND ACCURACY SCORE
-# create the c50 model with boosting: trials = 10
-error_cost <- matrix(c(0,4,1,0), nrow = 2)
-model <- C5.0(formula = Survived~., data = train_data, trials = 10)
-
-summary(model)
-
-# get predictions
-predictions <- predict(model, test_data)
-
-# score: 80%
-mean(predictions == test_data$Survived)
-
-# 15 false positives, 29 false negatives
-CrossTable(test_data$Survived, predictions, prop.r = F, prop.c = F, prop.chisq = F)
-
+cv_c50_function <- function(fold){
+        train <- tdata[-folds$Fold01,]
+        test <- tdata[folds$Fold01,]
+        c50_model <- C5.0(train[-1], train$Survived)
+        c50_predictions <- predict(c50_model, test[-1])
+        c50_actual <- test$Survived
+        mean_score <- mean(c50_predictions == c50_actual)
+        kappa <- kappa2(data.frame(c50_actual, c50_predictions))$value
+        return(mean_score)
+}
 
 
-# STEP 12: CREATE RANDOM FOREST MODEL AND GET ACCURACY AND PREDICTIONS
-# create the random forest model
-rf_model <- randomForest(train_data[-1], train_data$Survived, costs = error_cost)
+# STEP 12: GET ACCURACY AND PREDICTIONS FROM MULTIPLE MODELS USING 10-FOLD CV
 
+# Random Forest
+rf_results <- lapply(folds, cv_rf_function)
+mean(unlist(rf_results))
+
+rf_model <- randomForest(tdata[-1], tdata$Survived)
 summary(rf_model)
-
-# get predictions
-rf_predictions <- predict(rf_model, test_data[,-1])
-
-# score: 80%
-mean(rf_predictions == test_data$Survived)
-
-# 11 false positives, 25 false negatives
-CrossTable(test_data$Survived, rf_predictions, prop.r = F, prop.c = F, prop.chisq = F)
+importance(rf_model)
+varImpPlot(rf_model)
 
 
-
-# STEP 13: CREATE LOGISTIC REGRESSION MODEL AND GET ACCURACY AND PREDICTIONS
-# create the log model
-lr_model <- glm(Survived~., data = train_data, family = "binomial")
-summary(lr_model)
-
-# get predictions
-predictions_lr <- predict(lr_model, newdata = test_data, type = "response")
-predictions_lr <- ifelse(predictions_lr > .60, "Yes", "No")
-
-# get accuracy
-mean(predictions_lr == test_data$Survived)
-
-
-
-# STEP 14: CREATE RPART MODEL AND GT ACCURACY AND PREDICTIONS
-# create the rpart model
-rpart_model <- rpart(formula = Survived ~., data = train_data, method = "class")
-summary(rpart_model)
-rpart.plot(rpart_model)
-
-# get predictions
-predictions_rpart <- predict(rpart_model, newdata = test_data, type = "class")
-
-# get accuracy
-mean(predictions_rpart == test_data$Survived)
+# C5.0
+c50_results <- lapply(folds, cv_c50_function)
+mean(unlist(c50_results))
 
 
 # FINAL STEP: RUN TEST DATA THROUGH FUNCTION AND MODEL
@@ -299,7 +281,7 @@ kc_test_data <- clean_titanic_data(kc_test_data)
 # get predictions from random forest model on actual test data
 kc_predictions <- predict(rf_model, newdata = kc_test_data)
      
-# join predictions back to the original passenger IDs and conver to 0 1
+# join predictions back to the original passenger IDs and convert to 0 1
 kc_submission$Survived <- kc_predictions
 kc_submission$Survived <- as.factor(recode(kc_submission$Survived, "Yes" = "1", "No" = "0"))
 
@@ -307,85 +289,11 @@ kc_submission$Survived <- as.factor(recode(kc_submission$Survived, "Yes" = "1", 
 view(kc_submission)
 
 # export to csv for submission
-#write_csv(kc_submission, "kc_submission_perez.csv")
+write_csv(kc_submission, "kc_submission_rf.csv")
 #write_csv(kc_submission, "kc_submission_4_perez.csv")
 
 
 
-# FINAL STEP: RUN TEST DATA THROUGH FUNCTION AND MODEL
-# Kaggle Submission 2 - Logistic Regression Model
-
-# get predictions
-kc_predictions_lr <- predict(lr_model, newdata = kc_test_data, type = "response")
-kc_predictions_lr <- ifelse(kc_predictions_lr > .60, 1, 0)
-
-# combine to passengerIDs
-kc_submission$Survived <- kc_predictions_lr
-
-# view kc submission
-view(kc_submission)
-
-# export to csv for submission
-#write_csv(kc_submission, "kc_submission_2_perez.csv")
-#write_csv(kc_submission, "kc_submission_5_perez.csv")
-
-
-
-# Kaggle Submission 6 - RPart Model
-
-# get predictions
-kc_predictions_rp <- predict(rpart_model, newdata = kc_test_data, type = "class")
-kc_predictions_rp <- ifelse(kc_predictions_rp == "Yes", 1, 0)
-
-# combine to passengerIDs
-kc_submission$Survived <- kc_predictions_rp
-
-# view kc submission
-view(kc_submission)
-
-# export to csv for submission
-write_csv(kc_submission, "kc_submission_6_perez.csv")
-#write_csv(kc_submission, "kc_submission_5_perez.csv")
-
-
-
-
-
-
-
-
-
-# METHODS TO TRY LATER IN ORDER TO IMPROVE MODEL
-# # regression methods
-# reg_data <- read_csv("train.csv", col_names = TRUE)
-# 
-# reg_data$Pclass <- as.factor(recode(reg_data$Pclass, "1" = "First", "2" = "Second", "3" = "Third"))
-# reg_data$Sex <- as.factor(reg_data$Sex)
-# reg_data$Embarked <- as.factor(reg_data$Embarked)
-# 
-# # remove unnecessary features
-# str(reg_data)
-# 
-# # create training set
-# set.seed(123)
-# train_i <- sample(nrow(reg_data), .75*nrow(reg_data))
-# 
-# train_data <- reg_data[train_i,]
-# test_data <- reg_data[-train_i,]
-# 
-# # test training set proportion
-# prop.table(table(train_data$Survived)) # good seed value
-# 
-# 
-# # run regression
-# log_model <- glm(formula = Survived ~ ., data = train_data[,-c(1,4,9,11)], family = "binomial")
-# 
-# # get predictions
-# predictions <- predict(log_model, newdata = test_data[,-c(1,4,9,11)], type = "response")
-# status <- ifelse(predictions > .5, 1, 0)
-# 
-# 
-# 
 
 
 
